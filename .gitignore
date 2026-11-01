@@ -1,0 +1,28 @@
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runtime data and uploaded evidence
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite-*
+data/*.sqlite3
+uploads/*
+!uploads/.gitkeep
+
+# Logs and local tooling
+*.log
+.DS_Store
