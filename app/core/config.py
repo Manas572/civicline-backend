@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     admin_user_ids: str = ""
     gemini_api_key: str = ""
     groq_api_key: str = ""
-    gemini_vision_model: str = "gemini-3.8-flash"
+    # 2.5 Flash is verified against the configured API key and civic image
+    # workload; the newer 3.8 endpoint timed out in the live test.
+    gemini_vision_model: str = "gemini-2.5-flash"
     groq_vision_model: str = "qwen/qwen3.8-27b"
     groq_asr_model: str = "whisper-large-v3-turbo"
     gemini_transcribe_model: str = "gemini-3.5-transcribe"

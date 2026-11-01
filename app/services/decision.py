@@ -110,6 +110,18 @@ def decide(
     visual_score = max(visual_score, {"small": 22, "medium": 42, "large": 68}.get(pothole_size, 0))
     visual_score = max(visual_score, {"short": 40, "long": 68, "structural": 92}.get(crack_extent, 0))
     visual_score = max(visual_score, {"minor": 35, "extensive": 72, "none": 0}.get(water_pooling, 0))
+    # A pothole category with missing/uncertain visual attributes should not
+    # collapse to the 15-point baseline. Use a conservative road-hazard floor;
+    # Gemini's observed size, pooling, and collapse factors raise it further.
+    if issue == "pothole":
+        visual_score = max(visual_score, 40)
+        if not observation or water_pooling == "unknown":
+            reasons.append("Pothole severity uses a conservative visual-data fallback")
+            rules.append("pothole_visual_fallback_floor")
+    if issue == "pothole" and water_pooling in ("minor", "extensive"):
+        visual_score = max(visual_score, 55 if water_pooling == "minor" else 72)
+        reasons.append("Standing water in a pothole increases the road-hazard score")
+        rules.append("water_filled_pothole_severity_increase")
     if issue == "bridge_crack":
         visual_score = max(visual_score, 75)
     if observation and observation.image_quality == "poor":
