@@ -19,13 +19,19 @@ def _jwks_client(url: str):
     return jwt.PyJWKClient(url, cache_jwk_set=True, lifespan=300)
 
 
-def ensure_public_role(user_id: str) -> str:
+def ensure_public_role(user_id: str, email: str | None = None, name: str | None = None) -> str:
     """Give first-time users PUBLIC without overwriting a trusted existing role."""
+    settings = get_settings()
+    trusted_ids = {v.strip() for v in settings.admin_user_ids.split(',') if v.strip()}
+    trusted_emails = {v.strip().lower() for v in settings.admin_emails.split(',') if v.strip()}
+    initial_role = 'ADMIN' if str(user_id) in trusted_ids or (email and email.lower() in trusted_emails) else 'PUBLIC'
     with connection() as conn:
         conn.execute(
-            "INSERT INTO user_roles(user_id,role,updated_at) VALUES(%s,'PUBLIC',NOW()) "
-            "ON CONFLICT(user_id) DO NOTHING",
-            (str(user_id),),
+            "INSERT INTO user_roles(user_id,role,email,name,updated_at) VALUES(%s,%s,%s,%s,NOW()) "
+            "ON CONFLICT(user_id) DO UPDATE SET email=COALESCE(EXCLUDED.email,user_roles.email), "
+            "name=COALESCE(EXCLUDED.name,user_roles.name), "
+            "role=CASE WHEN user_roles.role='ADMIN' OR EXCLUDED.role='ADMIN' THEN 'ADMIN' ELSE user_roles.role END,updated_at=NOW()",
+            (str(user_id), initial_role, email, name),
         )
         row = conn.execute("SELECT role FROM user_roles WHERE user_id=%s", (str(user_id),)).fetchone()
     return row["role"]
@@ -49,7 +55,7 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
             raise jwt.InvalidTokenError("missing subject")
     except Exception as exc:
         raise HTTPException(401, "Invalid or expired session", headers={"WWW-Authenticate": "Bearer"}) from exc
-    role = ensure_public_role(str(user_id))
+    role = ensure_public_role(str(user_id), claims.get("email"), claims.get("name"))
     return {"user_id": str(user_id), "role": role, "claims": claims}
 
 

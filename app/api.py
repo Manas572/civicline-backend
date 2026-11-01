@@ -10,9 +10,11 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.auth import current_user, require_admin
@@ -36,6 +38,44 @@ STATUS_ORDER = {"awaiting_review": 0, "submitted": 1, "assigned": 2, "in_progres
 def authenticated_identity(user=Depends(current_user)):
     """Return the app role from PostgreSQL alongside the verified Neon identity."""
     return {"user_id": user["user_id"], "role": user["role"]}
+
+
+class UserRoleUpdate(BaseModel):
+    role: Literal["PUBLIC", "ADMIN"]
+
+
+@router.get("/admin/users", dependencies=[Depends(require_admin)])
+def admin_list_users(search: str | None = None, role: Literal["PUBLIC", "ADMIN"] | None = None,
+                     limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+    where, params = [], []
+    if role:
+        where.append("role=%s"); params.append(role)
+    if search and search.strip():
+        where.append("(COALESCE(name,'') ILIKE %s OR COALESCE(email,'') ILIKE %s OR user_id ILIKE %s)")
+        term=f"%{search.strip()}%"; params.extend([term,term,term])
+    clause=" WHERE "+" AND ".join(where) if where else ""
+    with connection() as conn:
+        total=conn.execute(f"SELECT COUNT(*) AS n FROM user_roles{clause}",params).fetchone()["n"]
+        rows=conn.execute(f"SELECT user_id,name,email,role,created_at FROM user_roles{clause} ORDER BY created_at DESC LIMIT %s OFFSET %s",[*params,limit,offset]).fetchall()
+        counts=conn.execute("SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE role='ADMIN') AS admins,COUNT(*) FILTER(WHERE role='PUBLIC') AS citizens FROM user_roles").fetchone()
+    return {"items":[dict(r) for r in rows],"total":total,"admins":counts["admins"],"citizens":counts["citizens"],"limit":limit,"offset":offset}
+
+
+@router.patch("/admin/users/{user_id}/role", dependencies=[Depends(require_admin)])
+def admin_update_user_role(user_id: str, payload: UserRoleUpdate, actor=Depends(require_admin)):
+    if actor["user_id"] == user_id and payload.role != "ADMIN":
+        raise HTTPException(409,"You cannot demote your own account")
+    with connection() as conn:
+        # Serialize role changes so concurrent admins cannot both remove the last admin.
+        conn.execute("LOCK TABLE user_roles IN EXCLUSIVE MODE")
+        target=conn.execute("SELECT user_id,name,email,role,created_at FROM user_roles WHERE user_id=%s FOR UPDATE",(user_id,)).fetchone()
+        if not target: raise HTTPException(404,"User not found")
+        if target["role"]=="ADMIN" and payload.role=="PUBLIC":
+            admins=conn.execute("SELECT COUNT(*) AS n FROM user_roles WHERE role='ADMIN'").fetchone()["n"]
+            if admins<=1: raise HTTPException(409,"The last administrator cannot be demoted")
+        conn.execute("UPDATE user_roles SET role=%s,updated_at=NOW() WHERE user_id=%s",(payload.role,user_id))
+        updated=conn.execute("SELECT user_id,name,email,role,created_at FROM user_roles WHERE user_id=%s",(user_id,)).fetchone()
+    return dict(updated)
 
 
 async def _read_upload(file: UploadFile, allowed: set[str], max_mb: int | None = None) -> tuple[bytes, str]:

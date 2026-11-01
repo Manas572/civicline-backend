@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     auth_url: str = ""
     jwks_url: str = ""
     admin_user_ids: str = ""
+    admin_emails: str = ""
     gemini_api_key: str = ""
     groq_api_key: str = ""
     # 2.5 Flash is verified against the configured API key and civic image
